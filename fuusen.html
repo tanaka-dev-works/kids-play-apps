@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ふうせんとばせ</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+  font-family: 'Hiragino Maru Gothic Pro', 'BIZ UDPGothic', sans-serif;
+  user-select: none;
+  background: #87ceeb;
+}
+canvas { display: block; }
+#hint {
+  position: absolute;
+  bottom: 40px; left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255,255,255,0.9);
+  font-size: 20px;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  transition: opacity 1.2s;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">ふうせんを たっぷたっぷ たたいてね 🎈</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const hint = document.getElementById('hint');
+let hintGone = false;
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const BALLOON_COLORS = [
+  ['#ff5a7e', '#c8102e'],
+  ['#ffb347', '#e07b00'],
+  ['#ffe066', '#d4a800'],
+  ['#7ee08a', '#2e9e42'],
+  ['#6ec6ff', '#1a78c2'],
+  ['#c495ff', '#8040c0'],
+];
+
+let altitude = 0;
+let velocity = 0;
+const GRAVITY = 0.045;
+const TAP_BOOST = 4.2;
+const MAX_ALT = 12000;
+
+let balloonX = window.innerWidth / 2;
+let balloonVX = 0;
+let driftTarget = window.innerWidth / 2;
+let driftTimer = 0;
+let balloonSway = 0;
+let squash = 1;
+
+let clouds = [];
+let stars = [];
+let sparkles = [];
+let birds = [];
+
+let colorIdx = Math.floor(Math.random() * BALLOON_COLORS.length);
+let celebrated = false;
+let celebrationT = 0;
+
+function initWorld() {
+  balloonX = W / 2;
+  clouds = [];
+  for (let i = 0; i < 40; i++) {
+    clouds.push({
+      x: Math.random() * W,
+      alt: 800 + Math.random() * 7000,
+      scale: 0.6 + Math.random() * 1.2,
+      speed: 0.15 + Math.random() * 0.3,
+    });
+  }
+  stars = [];
+  for (let i = 0; i < 90; i++) {
+    stars.push({
+      x: Math.random() * W,
+      alt: 7500 + Math.random() * 6000,
+      r: 1 + Math.random() * 2.5,
+      tw: Math.random() * Math.PI * 2,
+    });
+  }
+  birds = [];
+  for (let i = 0; i < 5; i++) {
+    birds.push({
+      x: Math.random() * W,
+      alt: 1200 + Math.random() * 2500,
+      dir: Math.random() < 0.5 ? 1 : -1,
+      speed: 0.8 + Math.random() * 0.8,
+      flap: Math.random() * Math.PI * 2,
+    });
+  }
+}
+initWorld();
+
+function skyColor(alt) {
+  const t = Math.min(alt / 10000, 1);
+  const r = Math.round(135 - t * 125);
+  const g = Math.round(206 - t * 186);
+  const b = Math.round(235 - t * 175);
+  return `rgb(${r},${g},${b})`;
+}
+
+function altToY(objAlt) {
+  return H * 0.55 - (objAlt - altitude);
+}
+
+function mkSparkles(x, y, n, big) {
+  for (let i = 0; i < n; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * (big ? 6 : 3);
+    sparkles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      color: ['#ffe066','#ff9fd4','#a0f0ff','#c8ffb0','#fff'][Math.floor(Math.random()*5)],
+      r: 2 + Math.random() * (big ? 6 : 3),
+      life: 1,
+    });
+  }
+}
+
+function drawCloud(x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.beginPath();
+  ctx.arc(0, 0, 30, 0, Math.PI*2);
+  ctx.arc(32, -8, 24, 0, Math.PI*2);
+  ctx.arc(-30, -4, 22, 0, Math.PI*2);
+  ctx.arc(12, -18, 20, 0, Math.PI*2);
+  ctx.arc(2, 10, 26, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBird(b, y) {
+  ctx.save();
+  ctx.translate(b.x, y);
+  ctx.scale(b.dir, 1);
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  const w = Math.sin(b.flap) * 8;
+  ctx.beginPath();
+  ctx.moveTo(-12, w);
+  ctx.quadraticCurveTo(-4, -4, 0, 0);
+  ctx.quadraticCurveTo(4, -4, 12, w);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBalloon(x, y) {
+  const [light, dark] = BALLOON_COLORS[colorIdx];
+  const r = 55;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(1 / squash, squash);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, r * 1.15);
+  ctx.quadraticCurveTo(Math.sin(balloonSway * 2) * 14, r * 1.8, Math.sin(balloonSway) * 10, r * 2.4);
+  ctx.stroke();
+
+  const grad = ctx.createRadialGradient(-r*0.3, -r*0.35, r*0.1, 0, 0, r*1.1);
+  grad.addColorStop(0, light);
+  grad.addColorStop(1, dark);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 0.85, r, 0, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.ellipse(-r*0.3, -r*0.35, r*0.18, r*0.28, -0.4, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(-7, r * 0.98);
+  ctx.lineTo(7, r * 0.98);
+  ctx.lineTo(0, r * 1.16);
+  ctx.closePath();
+  ctx.fillStyle = dark;
+  ctx.fill();
+
+  const eyeY = -r * 0.1;
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.arc(-14, eyeY, 4.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(14, eyeY, 4.5, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(0, eyeY + 10, 10, 0.2, Math.PI - 0.2);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawGround() {
+  const gy = altToY(0) + 60;
+  if (gy > H + 100) return;
+  ctx.fillStyle = '#7ec850';
+  ctx.fillRect(0, gy, W, H - gy + 200);
+  ctx.fillStyle = '#8fd860';
+  for (let i = 0; i < 8; i++) {
+    ctx.beginPath();
+    ctx.arc(W * 0.06 + i * W * 0.14, gy, 40 + (i%3)*15, Math.PI, 0);
+    ctx.fill();
+  }
+  const hx = W * 0.7, hy = gy;
+  ctx.fillStyle = '#e8d0a0';
+  ctx.fillRect(hx - 35, hy - 55, 70, 55);
+  ctx.beginPath();
+  ctx.moveTo(hx - 45, hy - 55);
+  ctx.lineTo(hx, hy - 95);
+  ctx.lineTo(hx + 45, hy - 55);
+  ctx.closePath();
+  ctx.fillStyle = '#d04030';
+  ctx.fill();
+  ctx.fillStyle = '#8B5C2A';
+  ctx.fillRect(hx - 12, hy - 32, 24, 32);
+}
+
+function drawMoon() {
+  const y = altToY(11500);
+  if (y > H + 150 || y < -150) return;
+  const x = W * 0.72;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, 65, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff8d0';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x - 18, y - 12, 12, 0, Math.PI*2);
+  ctx.arc(x + 20, y + 18, 9, 0, Math.PI*2);
+  ctx.arc(x + 8, y - 25, 7, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(200,190,150,0.5)';
+  ctx.fill();
+  ctx.fillStyle = '#5a4a20';
+  ctx.beginPath(); ctx.arc(x - 15, y - 5, 4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + 15, y - 5, 4, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#5a4a20';
+  ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(x, y + 8, 12, 0.2, Math.PI - 0.2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+let frame = 0;
+function loop() {
+  frame++;
+
+  velocity -= GRAVITY;
+  if (velocity < -2.2) velocity = -2.2;
+  altitude += velocity;
+  if (altitude < 0) { altitude = 0; velocity = 0; }
+  if (altitude > MAX_ALT) { altitude = MAX_ALT; velocity = 0; }
+
+  balloonSway += 0.04;
+  squash += (1 - squash) * 0.15;
+
+  driftTimer--;
+  if (driftTimer <= 0) {
+    driftTarget = 100 + Math.random() * (W - 200);
+    driftTimer = 180 + Math.random() * 240;
+  }
+  if (driftTarget > W - 100) driftTarget = W - 100;
+  if (driftTarget < 100) driftTarget = 100;
+  balloonVX += (driftTarget - balloonX) * 0.0006;
+  balloonVX *= 0.96;
+  balloonX += balloonVX;
+  if (balloonX < 80) { balloonX = 80; balloonVX = Math.abs(balloonVX) * 0.5; }
+  if (balloonX > W - 80) { balloonX = W - 80; balloonVX = -Math.abs(balloonVX) * 0.5; }
+
+  const bx = balloonX + Math.sin(balloonSway) * 20;
+  const by = H * 0.55;
+
+  ctx.fillStyle = skyColor(altitude);
+  ctx.fillRect(0, 0, W, H);
+
+  stars.forEach(s => {
+    const y = altToY(s.alt);
+    if (y < -20 || y > H + 20) return;
+    s.tw += 0.08;
+    const a = 0.4 + Math.sin(s.tw) * 0.4;
+    const altFade = Math.min(Math.max((altitude - 5500) / 2500, 0), 1);
+    ctx.save();
+    ctx.globalAlpha = a * altFade;
+    ctx.beginPath();
+    ctx.arc(s.x, y, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.restore();
+  });
+
+  drawMoon();
+
+  clouds.forEach(c => {
+    c.x += c.speed;
+    if (c.x > W + 120) c.x = -120;
+    const y = altToY(c.alt);
+    if (y < -120 || y > H + 120) return;
+    drawCloud(c.x, y, c.scale);
+  });
+
+  birds.forEach(b => {
+    b.x += b.speed * b.dir;
+    b.flap += 0.25;
+    if (b.x > W + 40) b.x = -40;
+    if (b.x < -40) b.x = W + 40;
+    const y = altToY(b.alt);
+    if (y < -30 || y > H + 30) return;
+    drawBird(b, y);
+  });
+
+  drawGround();
+
+  sparkles = sparkles.filter(s => {
+    s.x += s.vx; s.y += s.vy;
+    s.vy += 0.08;
+    s.life -= 0.025;
+    if (s.life <= 0) return false;
+    ctx.save();
+    ctx.globalAlpha = s.life;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r * s.life, 0, Math.PI * 2);
+    ctx.fillStyle = s.color;
+    ctx.fill();
+    ctx.restore();
+    return true;
+  });
+
+  drawBalloon(bx, by);
+
+  if (altitude > 9500 && !celebrated) {
+    celebrated = true;
+    celebrationT = 1;
+    for (let i = 0; i < 60; i++) {
+      mkSparkles(Math.random() * W, Math.random() * H * 0.6, 1, true);
+    }
+  }
+  if (altitude < 5000) celebrated = false;
+
+  if (celebrationT > 0) {
+    celebrationT -= 0.006;
+    ctx.save();
+    ctx.globalAlpha = Math.min(celebrationT * 2, 1);
+    ctx.font = `${Math.round(48 + Math.sin(frame * 0.1) * 4)}px 'Hiragino Maru Gothic Pro', sans-serif`;
+    ctx.fillStyle = '#ffe066';
+    ctx.textAlign = 'center';
+    ctx.fillText('おほしさまに とうちゃく！', W / 2, H * 0.2);
+    ctx.restore();
+    if (frame % 6 === 0) mkSparkles(Math.random() * W, Math.random() * H * 0.5, 2, false);
+  }
+
+  const meterH = H * 0.35;
+  const mx = 26, my = H * 0.12;
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath();
+  ctx.roundRect(mx - 6, my, 12, meterH, 6);
+  ctx.fill();
+  const fillH = (altitude / MAX_ALT) * meterH;
+  ctx.fillStyle = '#ffe066';
+  ctx.beginPath();
+  ctx.roundRect(mx - 6, my + meterH - fillH, 12, fillH, 6);
+  ctx.fill();
+  ctx.font = '20px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('⭐', mx, my - 12);
+  ctx.fillText('🏠', mx, my + meterH + 26);
+  ctx.restore();
+
+  requestAnimationFrame(loop);
+}
+loop();
+
+function onTap(x, y) {
+  if (!hintGone) { hint.style.opacity = '0'; hintGone = true; }
+  velocity += TAP_BOOST;
+  if (velocity > 9) velocity = 9;
+  squash = 0.82;
+  balloonVX += (Math.random() - 0.5) * 3;
+  colorIdx = (colorIdx + 1) % BALLOON_COLORS.length;
+  const bx = balloonX + Math.sin(balloonSway) * 20;
+  mkSparkles(bx, H * 0.55 + 60, 10, false);
+}
+
+canvas.addEventListener('mousedown', e => onTap(e.clientX, e.clientY));
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  onTap(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: false });
+</script>
+</body>
+</html>
