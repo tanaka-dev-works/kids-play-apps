@@ -15,6 +15,7 @@
 | 🎈 ふうせんとばせ | [`apps/fuusen/`](apps/fuusen/) | タップで風船を空高く飛ばそう。雲を抜けて星空まで行くとお祝い演出！ |
 | ☂ かさをひらいて | [`apps/kasa-wo-hirate/`](apps/kasa-wo-hirate/) | 指やマウスでかさを動かすと、ふってくる雨がかさに当たってはじける |
 | 🔦 くらい うみの たんけん | [`apps/kurai-umi/`](apps/kurai-umi/) | 潜水艦のライトで暗い海を照らして、深さ4000mまでの生きもの32種類を探す。見つけると名前を読み上げて図鑑に集まる（[くわしく](apps/kurai-umi/README.md)） |
+| 🪐 ぐるぐる うちゅう | [`apps/guruguru-uchu/`](apps/guruguru-uchu/) | 太陽のまわりを押すと惑星が生まれて回りだし、真上を通るたびに音が鳴る宇宙オルゴール。合体・宇宙人の育成・星座つなぎつき（[くわしく](apps/guruguru-uchu/README.md)） |
 
 ## フォルダ構成
 
